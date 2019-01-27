@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="x-ua-compatible" content="ie=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>MaybeVoid - Getting Started Haskell Project with Nix</title>
+        <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+        <header>
+            <div class="logo">
+                <a href="/">
+                    <img src="/images/maybevoid-logo-1152px.png" />
+                </a>
+            </div>
+            <nav>
+                <a href="/pages/about.html">About</a>
+                <a href="/pages/wiki.html">Wiki</a>
+                <a href="/archive.html">Archive</a>
+            </nav>
+        </header>
+
+        <main role="main">
+            <h1>Getting Started Haskell Project with Nix</h1>
+            <article>
+    <section class="header">
+        Posted on January 27, 2019
+        
+            by Soares Chen
+        
+    </section>
+    <section>
+        <p>One of the most confusing thing when starting a Haskell project is on choosing the right toolchain. The Haskell ecosystem offers a number of package management solutions, which may be difficult for newcomers to choose. While most debates are about choosing between <a href="https://www.haskellstack.org/">Stack</a> and <a href="https://www.haskell.org/cabal/">cabal-install</a>, here I am going to introduce starting a Haskell project with <a href="https://nixos.org/nix/">Nix</a>.</p>
+<h2 id="why-nix">Why Nix</h2>
+<p>Strictly speaking, Nix is a general package manager that is not just for Haskell projects. You can use Nix to build projects written in any language, and that includes C/C++, Haskell, and even dynamic typed languages such as Python and Node.js. The biggest advantage of using Nix for projects is that it is language agnostic and follows functional programming principles such as purity.</p>
+<p>When introducing new languages to beginners, one of the most painful experience is to install a language toolchain on a person’s computer. Haskell is no exception, and telling people for example to uninstall Haskell Platform and install Stack would only add more confusion. Ideally, I’d like to <em>not</em> care about which version of GHC is installed on someone’s computer, and whether their <code>cabal</code> binary is linked to the same toolchain we want them to use.</p>
+<p>Nix solves this problem by providing a universal package management for everyone. Furthermore the purity property of nix means that anyone can build my Haskell project on their machine regardless of which version of GHC or cabal is installed.</p>
+<p>Comparing to Stack, Nix also have the advantage that we can host private Haskell packages, or even private distributions with Nix. The expressiveness of Nix makes it possible to add or remove packages, apply private patches to packages, use upstream or unpublished packages, and pin some packages to specific versions. When working on multi-language projects, Nix also makes it easy to integrate Haskell projects to a larger system and manage them as a whole.</p>
+<p>Having said that, setting up a project with Nix currently takes more effort than setting up a project with Haskell-specific tools such as Stack. This is mostly a documentation issue as Nix is not very well documented and may be confusing in some ways. I still believe learning to use Nix with Haskell is worth the effort, as Nix benefits the users of a project more than the maintainers. The knowledge for Nix is also transferrable, allowing you to build other non-Haskell projects with Nix as well after mastering it.</p>
+<h2 id="setup">Setup</h2>
+<p>This tutorial is mainly based on Gabriel Gonzalez’s guide to using <a href="https://github.com/Gabriel439/haskell-nix">Haskell with Nix</a>. To keep things simple I will skip the more advanced topics and focus on starting a bare minimal Haskell project with Nix.</p>
+<p>The first step is to install Nix on your machine following the instructions at <a href="https://nixos.org/nix/">https://nixos.org/nix/</a>. A quick reference of the installation command is as follow:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb1-1" title="1"><span class="ex">curl</span> https://nixos.org/nix/install <span class="kw">|</span> <span class="fu">sh</span></a></code></pre></div>
+<p>After installing Nix, it is recommended that you install Cabal on your system using Nix, so that you can use the <code>cabal</code> command inside <code>nix-shell</code>.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb2-1" title="1"><span class="ex">nix-env</span> -i cabal-install</a></code></pre></div>
+<p>Note that this may introduce some impurity to your project build step, as you now have to instruct your users to not only install Nix, but also Cabal globally. Later on I will introduce some ways to include cabal directly in a pure Nix environment. However as most of the Haskell Nix tutorials out there assume that you have Cabal installed globally, it is a good idea to have it so that you can follow other tutorials later on.</p>
+<p>Also note that there is no need to install GHC on your system. The Haskell Nix toolchain exposes GHC in both <code>nix-build</code> and <code>nix-shell</code>.</p>
+<h2 id="quick-hacks">Quick Hacks</h2>
+<p>Often times we just want to have some quick hack with a few package dependencies. In such cases setting up a full project structure with Cabal may be a bit overkill. Fortunately Nix can help us setup our desired Haskell environment quickly with <code>nix-shell</code>.</p>
+<p>Let’s say if we want to quickly try out the <code>lens</code> library and learn about lenses through GHCi, we can first enter <code>nix-shell</code> the following way:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb3-1" title="1"><span class="ex">nix-shell</span> -p <span class="st">&quot;haskellPackages.ghcWithPackages (pkgs: [pkgs.lens])&quot;</span></a></code></pre></div>
+<p>Nix will download the dependencies of <code>lens</code> and add the package to GHC’s include path. So if we open <code>ghci</code> inside of <code>nix-shell</code> we can use modules from <code>lens</code> directly.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb4-1" title="1">[<span class="ex">nix-shell</span>:~]$ ghci</a>
+<a class="sourceLine" id="cb4-2" title="2"><span class="ex">Prelude</span><span class="op">&gt;</span> import Control.Lens</a>
+<a class="sourceLine" id="cb4-3" title="3"><span class="ex">Prelude</span> Control.Lens<span class="op">&gt;</span> (<span class="st">&quot;hello&quot;</span>,<span class="st">&quot;world&quot;</span>)^<span class="ex">._2</span></a>
+<a class="sourceLine" id="cb4-4" title="4"><span class="st">&quot;world&quot;</span></a></code></pre></div>
+<p>We can include multiple Haskell packages into our Nix shell, in addition to executables from other Nix packages as well. For example the following command would setup a shell with both the <code>lens</code> and <code>mtl</code> Haskell packages installed, as well as including <code>cabal</code> and <code>gdb</code> inside a pure Nix shell.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb5-1" title="1"><span class="ex">nix-shell</span> --pure -p \</a>
+<a class="sourceLine" id="cb5-2" title="2">  <span class="st">&quot;haskellPackages.ghcWithPackages (pkgs: with pkgs; [lens mtl])&quot;</span> \</a>
+<a class="sourceLine" id="cb5-3" title="3">  <span class="st">&quot;haskellPackages.cabal-install&quot;</span> \</a>
+<a class="sourceLine" id="cb5-4" title="4">  gdb</a></code></pre></div>
+<p>If your Nix shell setup is a bit more complicated, you can create a <code>shell.nix</code> file with something like the following:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode nix"><code class="sourceCode bash"><a class="sourceLine" id="cb6-1" title="1"><span class="kw">{</span> <span class="ex">nixpkgs</span> ? import <span class="op">&lt;</span>nixpkgs<span class="op">&gt;</span> {<span class="kw">}</span> }:</a>
+<a class="sourceLine" id="cb6-2" title="2"><span class="bu">let</span></a>
+<a class="sourceLine" id="cb6-3" title="3">  <span class="ex">inherit</span> (nixpkgs) <span class="ex">pkgs</span><span class="kw">;</span></a>
+<a class="sourceLine" id="cb6-4" title="4">  <span class="ex">inherit</span> (pkgs) <span class="ex">haskellPackages</span><span class="kw">;</span></a>
+<a class="sourceLine" id="cb6-5" title="5"></a>
+<a class="sourceLine" id="cb6-6" title="6">  <span class="ex">haskellDeps</span> = ps: with ps<span class="kw">;</span><span class="bu"> [</span></a>
+<a class="sourceLine" id="cb6-7" title="7">    base</a>
+<a class="sourceLine" id="cb6-8" title="8">    lens</a>
+<a class="sourceLine" id="cb6-9" title="9">    mtl</a>
+<a class="sourceLine" id="cb6-10" title="10">  ];</a>
+<a class="sourceLine" id="cb6-11" title="11"></a>
+<a class="sourceLine" id="cb6-12" title="12">  ghc <span class="ot">=</span> haskellPackages.ghcWithPackages haskellDeps;</a>
+<a class="sourceLine" id="cb6-13" title="13"></a>
+<a class="sourceLine" id="cb6-14" title="14">  nixPackages <span class="ot">=</span> [</a>
+<a class="sourceLine" id="cb6-15" title="15">    ghc</a>
+<a class="sourceLine" id="cb6-16" title="16">    pkgs.gdb</a>
+<a class="sourceLine" id="cb6-17" title="17">    haskellPackages.cabal-install</a>
+<a class="sourceLine" id="cb6-18" title="18">  ];</a>
+<a class="sourceLine" id="cb6-19" title="19">in</a>
+<a class="sourceLine" id="cb6-20" title="20">pkgs.stdenv.mkDerivation {</a>
+<a class="sourceLine" id="cb6-21" title="21">  name <span class="ot">=</span> <span class="st">&quot;env&quot;</span>;</a>
+<a class="sourceLine" id="cb6-22" title="22">  buildInputs <span class="ot">=</span> nixPackages;</a>
+<a class="sourceLine" id="cb6-23" title="23">}</a></code></pre></div>
+<p>I will go into details on Nix in some future posts, for now the essence is that we are creating a “custom” ghc package in Nix bundled with the packages we desired, using <code>haskellPackages.ghcWithPackages</code>. We then use <code>stdenv.mkDerivation</code> as the standard way of building a Nix derivation. The <code>buildInputs</code> field contains which Nix packages we depend on, and we require the custom GHC we have, <code>gdb</code> and <code>cabal-install</code>.</p>
+<p>The main things for you to change is the array content of <code>haskellDeps</code> and <code>nixPackages</code>. After that you can use <code>nix-shell</code> to enter the custom shell you have defined:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb7-1" title="1"><span class="ex">nix-shell</span> --pure shell.nix</a></code></pre></div>
+<p>The <code>--pure</code> flag makes sure that you can only access the packages you have defined, so that you do not accidentally use global packages that you have installed on your system. In normal development it is common to not include the <code>--pure</code> flag during rapid prototyping.</p>
+<p>When you include Haskell packages with executable in <code>nix-shell</code>, those executables will automatically become available in your $PATH. If you just want to gain access to the executable of a particular Haskell package, you can also use <code>nix-build</code> to “build” the package in the current directory:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb8-1" title="1"><span class="ex">nix-build</span> <span class="st">&#39;&lt;nixpkgs&gt;&#39;</span> --attr haskellPackages.hakyll</a></code></pre></div>
+<p>From the above example, you will get <code>result/bin/hakyll-init</code>.</p>
+<h2 id="building-projects-with-nix">Building Projects With Nix</h2>
+<p>When building real world Haskell projects, we want to create <code>.nix</code> files in our project directory to manage the build for us. Under the hood, Nix would still use <code>cabal-install</code> to build the project for us. But just as with the quick hacks, we use Nix to manage the Haskell dependencies for us, instead of using Stack or Cabal.</p>
+<p>For a fresh project, we first start our Haskell project using <code>cabal init</code>. But instead of calling cabal directly, we can run it inside a Nix sandbox:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb9-1" title="1"><span class="ex">nix-shell</span> --pure -p ghc cabal-install --run <span class="st">&quot;cabal init&quot;</span></a></code></pre></div>
+<p>After creating our <code>.cabal</code> file, we use the <code>cabal2nix</code> command to generate a <code>default.nix</code> file from it.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb10-1" title="1"><span class="ex">nix-shell</span> --pure -p cabal2nix --run <span class="st">&quot;cabal2nix .&quot;</span> <span class="op">&gt;</span> default.nix</a></code></pre></div>
+<p>The <code>default.nix</code> file would contain the dependencies and build information extracted from the <code>.cabal</code> file. Note that you have to regenerate <code>default.nix</code> every time you update the <code>.cabal</code> file.</p>
+<p>If your project contains executable that you want to distribute, you can use <code>nix-build</code> to build the project in a pure way. However the <code>default.nix</code> generated from <code>cabal2nix</code> expects some arguments, and cannot be called directly from <code>nix-build</code>. In programming sense, <code>default.nix</code> contains a function that generates the Nix package given the expected arguments.</p>
+<p>Fortunately the arguments are rather standard in Nix. The reason <code>default.nix</code> is parameterized is so that it can be used for different Nix channels or snapshots. To build it against the default Nix stable channel, we create a <code>release.nix</code> file that calls it with the standard arguments:</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode nix"><code class="sourceCode bash"><a class="sourceLine" id="cb11-1" title="1"><span class="bu">let</span></a>
+<a class="sourceLine" id="cb11-2" title="2">  <span class="ex">pkgs</span> = import <span class="op">&lt;</span>nixpkgs<span class="op">&gt;</span> { };</a>
+<a class="sourceLine" id="cb11-3" title="3"><span class="kw">in</span></a>
+<a class="sourceLine" id="cb11-4" title="4">  <span class="ex">pkgs.haskellPackages.callPackage</span> ./default.nix { }</a></code></pre></div>
+<p>You would often see <code>release.nix</code> copied as-is to projects and tutorials, sometimes in different names, as it is simply a boilerplate file used together with <code>cabal2nix</code>.</p>
+<p>Now we can build our Haskell executable with the following:</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb12-1" title="1"><span class="ex">nix-build</span> release.nix</a></code></pre></div>
+<p>The project would be compiled in a pure Nix environment, and you should find the result executable in the <code>result/bin/</code> directory relative to where <code>nix-build</code> is run.</p>
+<p>The package, or derivation, from <code>release.nix</code> can then be imported by other Nix files to build new derivations. If you have a larger project in Nix, you can import <code>release.nix</code> to use the generated binary to build other projects.</p>
+<p>You can also use <code>nix-shell</code> to enter a shell with the Haskell dependencies specified in <code>default.nix</code> installed:</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb13-1" title="1"><span class="ex">nix-shell</span> --attr env release.nix</a></code></pre></div>
+<p>The <code>--attr env</code> flag is a Haskell-specific way of getting the shell environment from Haskell Nix packages. You will find <code>ghc</code> and <code>ghci</code> available with the dependencies available. Unfortunately the shell does not include <code>cabal</code> by default. That is why we have to globally install <code>cabal-install</code> with <code>nix-env -i cabal-install</code> earlier. Inside the Nix shell, we can run commands such as <code>cabal repl</code> and <code>cabal build</code>, and Cabal would load the dependencies from Nix.</p>
+<p>If we want to enter a pure Nix shell with <code>cabal-install</code>, we have to go through another hack and create a <code>shell.nix</code> that derives a shell out of our <code>release.nix</code>:</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode nix"><code class="sourceCode bash"><a class="sourceLine" id="cb14-1" title="1"><span class="kw">{</span> <span class="ex">nixpkgs</span> ? import <span class="op">&lt;</span>nixpkgs<span class="op">&gt;</span> {<span class="kw">}</span> }:</a>
+<a class="sourceLine" id="cb14-2" title="2"><span class="bu">let</span></a>
+<a class="sourceLine" id="cb14-3" title="3">  <span class="ex">inherit</span> (nixpkgs) <span class="ex">pkgs</span><span class="kw">;</span></a>
+<a class="sourceLine" id="cb14-4" title="4">  <span class="ex">inherit</span> (pkgs) <span class="ex">haskellPackages</span><span class="kw">;</span></a>
+<a class="sourceLine" id="cb14-5" title="5"></a>
+<a class="sourceLine" id="cb14-6" title="6">  <span class="ex">project</span> = import ./release.nix<span class="kw">;</span></a>
+<a class="sourceLine" id="cb14-7" title="7"><span class="kw">in</span></a>
+<a class="sourceLine" id="cb14-8" title="8"><span class="ex">pkgs.stdenv.mkDerivation</span> {</a>
+<a class="sourceLine" id="cb14-9" title="9">  <span class="ex">name</span> = <span class="st">&quot;shell&quot;</span><span class="kw">;</span></a>
+<a class="sourceLine" id="cb14-10" title="10">  <span class="ex">buildInputs</span> = project.env.nativeBuildInputs ++ [</a>
+<a class="sourceLine" id="cb14-11" title="11">    <span class="ex">haskellPackages.cabal-install</span></a>
+<a class="sourceLine" id="cb14-12" title="12">  ];</a>
+<a class="sourceLine" id="cb14-13" title="13">}</a></code></pre></div>
+<p>The <code>env</code> we get from <code>nix-shell --attr env release.nix</code> earlier is a standard derivation with the customized GHC included in <code>env.nativeBuildInputs</code>. When entering Nix shell, Nix would add the executables exposed by the derivations in <code>buildInputs</code> and <code>nativeBuildInputs</code> to our shell $PATH. So we simply make a new derivation that extends the build inputs from <code>release.nix</code> to add the executables we need, such as cabal install.</p>
+<p>With the new <code>shell.nix</code>, we can now for example run <code>cabal repl</code> inside a pure nix shell:</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb15-1" title="1"><span class="ex">nix-shell</span> --pure shell.nix --run <span class="st">&quot;cabal repl&quot;</span></a></code></pre></div>
+<h3 id="private-packages">Private Packages</h3>
+<p>If you have multiple private Haskell projects, you can have them depend on one another by importing <code>default.nix</code> and add them to the <code>haskellPackages</code> list. This can be done with a bit of boilerplate using <code>haskellPackages.override</code>:</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode nix"><code class="sourceCode bash"><a class="sourceLine" id="cb16-1" title="1"><span class="ex">haskellPackages</span> = pkgs.haskellPackages.override {</a>
+<a class="sourceLine" id="cb16-2" title="2">  <span class="ex">overrides</span> = self: super: {</a>
+<a class="sourceLine" id="cb16-3" title="3">    <span class="ex">my-haskell-project</span> = self.callPackage path/to/project/default.nix {};</a>
+<a class="sourceLine" id="cb16-4" title="4">  };</a>
+<a class="sourceLine" id="cb16-5" title="5">};</a></code></pre></div>
+<p>The above snippet would define a new <code>haskellPackages</code> with an additional package named <code>my-haskell-project</code>.</p>
+<h2 id="demo-project">Demo Project</h2>
+<p>We end this post with a demo project made available <a href="https://github.com/maybevoid/maybevoid.com/tree/master/projects/2019-01-27-getting-started-haskell-nix">on GitHub</a> to demonstrate how a Haskell project can be built purely with Nix. The project have a single dependency on the <code>lens</code> library, and exposes a module <code>Demo</code> and an executable <code>haskell-nix-demo</code>.</p>
+<p>The <code>Demo</code> module simply exports two strings <code>hello</code> and <code>world</code>, extracted from a tuple using <code>Control.Lens</code>. The <code>haskell-nix-demo</code> simply imports the strings and print out “hello world”.</p>
+<p>The key is the Nix files that define how the project is built:</p>
+<ul>
+<li><code>default.nix</code> is generated from <code>haskell-nix-demo.cabal</code> using <code>cabal2nix</code>.</li>
+<li><code>release.nix</code> is used to build the <code>haskell-nix-demo</code> executable.</li>
+<li><code>shell.nix</code> is used to enter a Nix shell with both Haskell dependencies and <code>cabal-install</code>.</li>
+<li><code>external.nix</code> is how an external project can import the library as a private module.</li>
+</ul>
+<p>The <code>Makefile</code> contains build recipes for building the Nix files:</p>
+<ul>
+<li><code>make build</code> builds the project using <code>nix-build</code>.</li>
+<li><code>make repl</code> enters <code>cabal repl</code> from a pure Nix shell.</li>
+<li><code>make shell</code> enters a Nix shell.</li>
+<li><code>make shell-pure</code> enters a pure Nix shell.</li>
+<li><code>make external-shell</code> enters a pure Nix shell with the project built and installed.</li>
+</ul>
+<p>The main difference between <code>make shell</code> and <code>make external-shell</code> is that <code>make shell</code> provides a shell environment <em>before</em> the project is built, while <code>make external-shell</code> shows how the project can be consumed as a Nix package. Inside <code>make external-shell</code>, both the <code>Demo</code> module and the <code>haskell-nix-demo</code> executable are ready for use:</p>
+<div class="sourceCode" id="cb17"><pre class="sourceCode bash"><code class="sourceCode bash"><a class="sourceLine" id="cb17-1" title="1">$ <span class="fu">make</span> external-shell</a>
+<a class="sourceLine" id="cb17-2" title="2">[<span class="ex">nix-shell</span>]$ haskell-nix-demo</a>
+<a class="sourceLine" id="cb17-3" title="3"><span class="ex">hello</span> world</a>
+<a class="sourceLine" id="cb17-4" title="4"></a>
+<a class="sourceLine" id="cb17-5" title="5">[<span class="ex">nix-shell</span>]$ ghci</a>
+<a class="sourceLine" id="cb17-6" title="6"><span class="ex">Prelude</span><span class="op">&gt;</span> import Demo</a>
+<a class="sourceLine" id="cb17-7" title="7"><span class="ex">Prelude</span> Demo<span class="op">&gt;</span> hello</a>
+<a class="sourceLine" id="cb17-8" title="8"><span class="st">&quot;hello&quot;</span></a>
+<a class="sourceLine" id="cb17-9" title="9"><span class="ex">Prelude</span> Demo<span class="op">&gt;</span> world</a>
+<a class="sourceLine" id="cb17-10" title="10"><span class="st">&quot;world&quot;</span></a></code></pre></div>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://github.com/Gabriel439/haskell-nix">Gabriel Gonzalez’s guide to using Haskell with Nix</a></li>
+<li><a href="https://nixos.org/nixpkgs/manual/#users-guide-to-the-haskell-infrastructure">Nixpkgs guide to the Haskell infrastructure</a></li>
+<li><a href="https://cabal.readthedocs.io/en/latest/nix-integration.html">Nix integration with Cabal</a></li>
+<li><a href="https://docs.haskellstack.org/en/stable/nix_integration/">Nix integration with Stack</a></li>
+</ul>
+    </section>
+</article>
+
+        </main>
+
+        <footer>
+            Content on this site is licensed under CC BY-NC 4.0
+            <a rel="license" href="http://creativecommons.org/licenses/by-nc/4.0/">
+                <img
+                    alt="Creative Commons License"
+                    style="border-width:0"
+                    src="https://i.creativecommons.org/l/by-nc/4.0/88x31.png" />
+            </a>
+        </footer>
+    </body>
+</html>

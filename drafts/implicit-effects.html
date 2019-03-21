@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="x-ua-compatible" content="ie=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <meta property="og:title" content="Implicit Effects: Algebraic Effects in Haskell with Implicit Parameters | MaybeVoid">
+    <meta property="og:image"
+        content="https://maybevoid.com/images/maybevoid-logo-1152x1152.png">
+
+    <meta property="twitter:title" content="Implicit Effects: Algebraic Effects in Haskell with Implicit Parameters | MaybeVoid">
+    <meta property="twitter:site" content="@maybevoid">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image"
+        content="https://maybevoid.com/images/maybevoid-logo-1152x1152.png">
+
+    <title>Implicit Effects: Algebraic Effects in Haskell with Implicit Parameters | MaybeVoid</title>
+
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="icon" type="image/png" href="/images/maybevoid-icon-64.png">
+  </head>
+  <body>
+    <header>
+      <div class="logo">
+        <a href="/">
+          <img src="/images/maybevoid-logo-1152x246.png" />
+        </a>
+      </div>
+      <nav>
+        <a href="/pages/about.html">About</a>
+        <a href="/pages/wiki.html">Wiki</a>
+        <a href="/archive.html">Archive</a>
+      </nav>
+    </header>
+
+    <main role="main">
+      <h1>Implicit Effects: Algebraic Effects in Haskell with Implicit Parameters</h1>
+      <p><i> This is a draft post I am working on for releasing the Haskell library <code>implicit-effects</code>. For any feedback, please feel free to ping me through <a href="mailto:soareschen@maybevoid.com">email</a> or drop a comment directly in the <a href="https://github.com/maybevoid/maybevoid.com/commits/master/site/drafts/implicit-effects.md">latest commit</a>. </i></p>
+<h2 id="introduction">Introduction</h2>
+<p>In this post, I would like to introduce a new effects library called <code>implicit-effects</code> to the Haskell community. <code>implicit-effects</code> is an <em>experimental</em> effects library I developed with less than a year study into algebraic effects. I will share about the different approaches I use to implement algebraic effects in Haskell, which I think is worth <em>considering</em> or <em>explored further</em> by the Haskell community. However considering this is my first serious personal Haskell project, and given that I lacks professional experience in developing production quality Haskell applications, this is <em>not</em> a call for adoption for you to use <code>implicit-effects</code> in any serious Haskell projects. (At least not yet)</p>
+<p>In the following sections, we will first go through a brief overview of the current state of effects management in Haskell, and compare it to the full flexibility of coding in algebraic effects. We then observe the repeating patterns used in defining new effects, and learn about new concepts called operations and co-operations. We will see how with implicit parameters, we can bind effect operations into constraints without defining type classes. We then look at higher level structures, such as <code>Computation</code>, <code>Handler</code>, and <code>Pipeline</code>, can help us perform transformation on computations to give partial interpretation to effects. Finally we look at some example programs in Eff and see how we can implement them in Haskell using <code>implicit-effects</code>.</p>
+<h2 id="from-monad-to-extensible-effects">From Monad to Extensible Effects</h2>
+<p>The concept of monad was borrowed from category theory to Haskell, with one of its main use case is for allowing impure computation in a pure language using the <code>IO</code> monad. Since then Haskellers have written numerous tutorials to explain what monad is to the broader programming community. The abstraction behind monad may be difficult to grasp for newcomers, but it is the functionalities provided by implementing new monads that makes it worth learning deeper.</p>
+<h3 id="bare-monad">Bare Monad</h3>
+<p>When we first started learning monads, we typically come across few of the well known examples such as <code>Reader</code> and <code>State</code>, and they would look something as follow:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode haskell"><code class="sourceCode haskell"><a class="sourceLine" id="cb1-1" title="1"><span class="co">-- Effect Definitions</span></a>
+<a class="sourceLine" id="cb1-2" title="2"><span class="kw">type</span> <span class="dt">Reader</span> r a <span class="ot">=</span> r <span class="ot">-&gt;</span> a</a>
+<a class="sourceLine" id="cb1-3" title="3"><span class="kw">newtype</span> <span class="dt">State</span> s a <span class="ot">=</span> <span class="dt">State</span> {<span class="ot"> runState ::</span> s <span class="ot">-&gt;</span> (a,s) }</a>
+<a class="sourceLine" id="cb1-4" title="4"></a>
+<a class="sourceLine" id="cb1-5" title="5"><span class="co">-- Effect Implementations</span></a>
+<a class="sourceLine" id="cb1-6" title="6"><span class="kw">instance</span> <span class="dt">Monad</span> ((<span class="ot">-&gt;</span>) r) <span class="kw">where</span></a>
+<a class="sourceLine" id="cb1-7" title="7">  <span class="fu">return</span> x <span class="ot">=</span> \_ <span class="ot">-&gt;</span> x</a>
+<a class="sourceLine" id="cb1-8" title="8">  h <span class="op">&gt;&gt;=</span> f <span class="ot">=</span> \w <span class="ot">-&gt;</span> f (h w) w</a>
+<a class="sourceLine" id="cb1-9" title="9"></a>
+<a class="sourceLine" id="cb1-10" title="10"><span class="kw">instance</span> <span class="dt">Monad</span> (<span class="dt">State</span> s) <span class="kw">where</span></a>
+<a class="sourceLine" id="cb1-11" title="11">  <span class="fu">return</span> x <span class="ot">=</span> <span class="dt">State</span> <span class="op">$</span> \s <span class="ot">-&gt;</span> (x,s)</a>
+<a class="sourceLine" id="cb1-12" title="12">  (<span class="dt">State</span> h) <span class="op">&gt;&gt;=</span> f <span class="ot">=</span> <span class="dt">State</span> <span class="op">$</span></a>
+<a class="sourceLine" id="cb1-13" title="13">    \s <span class="ot">-&gt;</span> <span class="kw">let</span> (a, s&#39;) <span class="ot">=</span> h s</a>
+<a class="sourceLine" id="cb1-14" title="14">              (<span class="dt">State</span> g) <span class="ot">=</span> f a</a>
+<a class="sourceLine" id="cb1-15" title="15">          <span class="kw">in</span>  g s&#39;</a>
+<a class="sourceLine" id="cb1-16" title="16"></a>
+<a class="sourceLine" id="cb1-17" title="17"><span class="co">-- Effect Operations</span></a>
+<a class="sourceLine" id="cb1-18" title="18">ask <span class="ot">=</span> <span class="fu">id</span></a>
+<a class="sourceLine" id="cb1-19" title="19">get <span class="ot">=</span> <span class="dt">State</span> <span class="op">$</span> \s <span class="ot">-&gt;</span> (s,s)</a>
+<a class="sourceLine" id="cb1-20" title="20">put s <span class="ot">=</span> <span class="dt">State</span> <span class="op">$</span> \s <span class="ot">-&gt;</span> ((),s)</a>
+<a class="sourceLine" id="cb1-21" title="21"></a>
+<a class="sourceLine" id="cb1-22" title="22"><span class="co">-- Result Extractions</span></a>
+<a class="sourceLine" id="cb1-23" title="23">runReader <span class="ot">=</span> (<span class="op">$</span>)</a>
+<a class="sourceLine" id="cb1-24" title="24">evalState <span class="ot">=</span> <span class="fu">fst</span> <span class="op">.</span> runState</a></code></pre></div>
+<p>As we implement more monads, a pattern arise and we find ourselves doing similar things each time. We first define new datatypes such as <code>type Reader</code> or <code>newtype State</code> to store the information required to carry out the monadic operations containing the desired effects. After that we define the <code>Monad</code> instance for these datatypes to give meaning to how <code>return</code> and <code>&gt;&gt;=</code> should behave. To make it convenient to the library users, we also define convenient functions such as <code>ask</code>, <code>get</code>, and <code>put</code> so that users can perform the desired actions inside the monad without knowing the details. Finally we define extraction functions so that we can extract a value <code>a</code> out of a monad <code>m</code> for any <code>m a</code>.</p>
+<p>An effect in its most basic form can be broken down into four parts:</p>
+<p><strong>Effect Definition</strong> - This defines the concept and “shape” of the effect through its type constructor / kind signature. We can see that <code>Reader</code> is an effect parameterized by a type <code>r</code>, while <code>State</code> is an effect parameterized by a type <code>s</code>. Both <code>Reader</code> and <code>State</code> have the type/kind <code>Type -&gt; (Type -&gt; Type)</code> - note the bracket on the right side is written explicitly to show it produces a monad type, which have the type <code>Type -&gt; Type</code>. Lastly, also note that the body of the type definition is kind of irrelevant from the user point of view. The author of an effect can choose to not expose the data constructors without affecting the users of an effect.</p>
+<p><strong>Effect Implementation</strong> - This turns the datatypes we defined into a <em>concrete</em> effect by making it a monad instance. With that we can perform the supported effectful computation under the given monad. In the example above, the implementation also performs <em>interpretation</em> of the effect through both the <code>Monad</code> instance and the datatype bodies. The concrete effect is also tied directly to the effect definition, which means we cannot define any alternative implementation that share the same effect definition. We will see in later sections how abstract implementations and free implementations allows multiple implementations of the same effect definition.</p>
+<p><strong>Effect Operation</strong> - The effect operations can be seen as the external API for an effect. For users of an effect, the only thing matter is the operation functions associated with the effect definition. An effect operation may accept zero or more arguments and return an effectful result wrapped under the associated monad <code>m</code>. The body of the operation defines how the operation is translated to the underlying concrete effect, but that detail is not important to the user.</p>
+<p><strong>Result Extraction</strong> - Many effect implementations build up <em>contexts</em> when executing effectful computations, and then extract result from the final context returned from the end of the computation. The context typically require additional arguments for the result to be extracted, such as the initial state for the State monad. In the above example, the context is defined directly in the body of the effect definition. As a result the bind operator of the <code>Monad</code> instances also have to take care of the monadic binding of the contexts. Tight coupling between the context and monadic bind is one major source of complexity, and we will learn in later sections how algebraic effects decouples the context from the monad.</p>
+<h3 id="monad-transformers">Monad Transformers</h3>
+<p>Effects defined with the bare monad approach as described in the earlier section is relatively easy to understand, but it suffers from non-composability of monads. What happen if we want to perform an effectful computation that uses operations from both the <code>Reader</code> and <code>State</code> monad? We wouldn’t able to reuse the code we defined earlier, and instead we would have to define a whole new effect definition that includes both operations, and scratch our heads on how to implement <code>(&gt;&gt;=)</code> for the combined contexts.</p>
+<p>Fortunately with monad transformers, we gain back some extensibilty we lost from using bare monads. We would instead define our reader and state effects as <code>ReaderT</code> and <code>StateT</code>.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode haskell"><code class="sourceCode haskell"><a class="sourceLine" id="cb2-1" title="1"><span class="co">-- Concrete Effects</span></a>
+<a class="sourceLine" id="cb2-2" title="2"><span class="kw">newtype</span> <span class="dt">ReaderT</span> r m a <span class="ot">=</span> <span class="dt">ReaderT</span> {</a>
+<a class="sourceLine" id="cb2-3" title="3"><span class="ot">  runReaderT ::</span> r <span class="ot">-&gt;</span> m a</a>
+<a class="sourceLine" id="cb2-4" title="4">}</a>
+<a class="sourceLine" id="cb2-5" title="5"></a>
+<a class="sourceLine" id="cb2-6" title="6"><span class="kw">newtype</span> <span class="dt">StateT</span> s m a <span class="ot">=</span> <span class="dt">StateT</span> {</a>
+<a class="sourceLine" id="cb2-7" title="7"><span class="ot">  runStateT ::</span> s <span class="ot">-&gt;</span> m (a, s)</a>
+<a class="sourceLine" id="cb2-8" title="8">}</a>
+<a class="sourceLine" id="cb2-9" title="9"></a>
+<a class="sourceLine" id="cb2-10" title="10"><span class="co">-- Abstract Effect</span></a>
+<a class="sourceLine" id="cb2-11" title="11"><span class="kw">class</span> <span class="dt">Monad</span> m <span class="ot">=&gt;</span> <span class="dt">MonadReader</span> r m <span class="op">|</span> m <span class="ot">-&gt;</span> r</a>
+<a class="sourceLine" id="cb2-12" title="12"> <span class="kw">where</span></a>
+<a class="sourceLine" id="cb2-13" title="13">  <span class="co">-- Effect Operations</span></a>
+<a class="sourceLine" id="cb2-14" title="14"><span class="ot">  ask ::</span> m r</a>
+<a class="sourceLine" id="cb2-15" title="15"></a>
+<a class="sourceLine" id="cb2-16" title="16"><span class="co">-- Abstract Effect</span></a>
+<a class="sourceLine" id="cb2-17" title="17"><span class="kw">class</span> <span class="dt">Monad</span> m <span class="ot">=&gt;</span> <span class="dt">MonadState</span> s m <span class="op">|</span> m <span class="ot">-&gt;</span> s</a>
+<a class="sourceLine" id="cb2-18" title="18"> <span class="kw">where</span></a>
+<a class="sourceLine" id="cb2-19" title="19">  <span class="co">-- Effect Operations</span></a>
+<a class="sourceLine" id="cb2-20" title="20"><span class="ot">  get ::</span> m s</a>
+<a class="sourceLine" id="cb2-21" title="21"><span class="ot">  put ::</span> s <span class="ot">-&gt;</span> m ()</a></code></pre></div>
+<p>In the monad transformer approach, each effect definition is parameterized by an effect <code>m</code> in addition to the result type <code>a</code> of a bare monad. A monad transformer <code>t</code> basically takes any monad <code>m</code> and form a new monad <code>t m</code>. With some <code>FlexibleInstances</code> derivations through the <code>MonadTrans</code> class, the transformed monad <code>t m</code> supports all the existing effects and operations of the inner monad <code>m</code> in addition to new effects and operations introduced by <code>t</code>.</p>
+<p>There are also some new concepts introduced:</p>
+<p><strong>Concrete Effects</strong> - <code>ReaderT</code> and <code>StateT</code> are now definitions of concrete effects. They still define the contexts in the body and implement the <code>Monad</code> instance, but users of the effects no longer need to access them directly.</p>
+<p><strong>Abstract Effects</strong> - <code>MonadReader</code> and <code>MonadState</code> are definitions of <em>abstract</em> effects. The effects are defined as a typeclass, with its associated operations defined as methods of the class. This allows multiple concrete effects to be implemented for a given abstract effect. Computations that uses a <code>MonadState s</code> effect for example do not need to care whether it is running under a <code>MonadState s (ReaderT r m)</code> or a <code>ReaderT r (MonadState s m)</code>, or even a custom <code>MyStateEff s</code> monad.</p>
+<p>The monad transformers approach is well known and battle-tested, in particular with the MTL library. It provides moderate extensibility through type classes, and is optimized over time to have high performance. However defining new effects through typeclasses is not always straightforward, requiring users to have intricate knowledge of various GHC extensions to implement or even use a given effect under their specific monad. The limitation of typeclasses also makes it difficult to implement some of the algebraic effects examples using monad transformers alone.</p>
+<h3 id="free-monad">Free Monad</h3>
+<p>The monad transformer approach provides a somewhat extensible way to create custom effects. However it still have a tight coupling between the <em>concrete</em> effect, <em>interpretation</em> of the effect, and the <em>context</em> for the interpretation. In order to give new meaning or interpretation to an abstract effect, we must define a new datatype and provide at least instances of <code>Functor</code>, <code>Applicative</code>, and <code>Monad</code>.</p>
+<p>Because of this, Haskellers tend to conflate between the concepts of <em>monad</em> and <em>effects</em>. It is common that defining new effects is synonymous to defining datatypes with <code>Monad</code> instances. Free monad changes this by making it possible to create and interpret effects without implementing a <code>Monad</code> instance.</p>
+<p>The concept of free monad also comes from category theory. It means we can get a monad for free for any <code>Functor</code> instance <code>f</code>. The <code>Free f</code> monad instance builds up a computation tree in <code>(&gt;&gt;=)</code>, which then requires interpretation to give actual meaning to the computation.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode haskell"><code class="sourceCode haskell"><a class="sourceLine" id="cb3-1" title="1"><span class="kw">import</span> <span class="dt">Control.Monad.Free</span></a>
+<a class="sourceLine" id="cb3-2" title="2"></a>
+<a class="sourceLine" id="cb3-3" title="3"><span class="co">-- (recap definition)</span></a>
+<a class="sourceLine" id="cb3-4" title="4"><span class="kw">data</span> <span class="dt">Free</span> f a</a>
+<a class="sourceLine" id="cb3-5" title="5">  <span class="ot">=</span> <span class="dt">Pure</span> a</a>
+<a class="sourceLine" id="cb3-6" title="6">  <span class="op">|</span> <span class="dt">Free</span> (f (<span class="dt">Free</span> f a))</a>
+<a class="sourceLine" id="cb3-7" title="7"></a>
+<a class="sourceLine" id="cb3-8" title="8"><span class="co">-- Effect Co-operations</span></a>
+<a class="sourceLine" id="cb3-9" title="9"><span class="kw">data</span> <span class="dt">EnvCoOp</span> e r</a>
+<a class="sourceLine" id="cb3-10" title="10">  <span class="ot">=</span> <span class="dt">Ask</span> (e <span class="ot">-&gt;</span> r)</a>
+<a class="sourceLine" id="cb3-11" title="11">  <span class="kw">deriving</span> (<span class="dt">Functor</span>)</a>
+<a class="sourceLine" id="cb3-12" title="12"></a>
+<a class="sourceLine" id="cb3-13" title="13"><span class="kw">data</span> <span class="dt">StateCoOp</span> s r</a>
+<a class="sourceLine" id="cb3-14" title="14">  <span class="ot">=</span> <span class="dt">Get</span> (s <span class="ot">-&gt;</span> r)</a>
+<a class="sourceLine" id="cb3-15" title="15">  <span class="op">|</span> <span class="dt">Put</span> s (() <span class="ot">-&gt;</span> r)</a>
+<a class="sourceLine" id="cb3-16" title="16">  <span class="kw">deriving</span> (<span class="dt">Functor</span>)</a>
+<a class="sourceLine" id="cb3-17" title="17"></a>
+<a class="sourceLine" id="cb3-18" title="18"><span class="co">-- Free Effects</span></a>
+<a class="sourceLine" id="cb3-19" title="19"><span class="kw">type</span> <span class="dt">EnvEff</span> e a <span class="ot">=</span> <span class="dt">Free</span> (<span class="dt">EnvCoOp</span> e) a</a>
+<a class="sourceLine" id="cb3-20" title="20"><span class="kw">type</span> <span class="dt">StateEff</span> s a <span class="ot">=</span> <span class="dt">Free</span> (<span class="dt">StateCoOp</span> s) a</a>
+<a class="sourceLine" id="cb3-21" title="21"></a>
+<a class="sourceLine" id="cb3-22" title="22"><span class="co">-- Effect Operations</span></a>
+<a class="sourceLine" id="cb3-23" title="23"></a>
+<a class="sourceLine" id="cb3-24" title="24"><span class="co">-- EnvOps</span></a>
+<a class="sourceLine" id="cb3-25" title="25"><span class="kw">instance</span> <span class="dt">MonadReader</span> e (<span class="dt">EnvEff</span> e) <span class="kw">where</span></a>
+<a class="sourceLine" id="cb3-26" title="26">  ask <span class="ot">=</span> liftF <span class="op">$</span> <span class="dt">Ask</span> <span class="fu">id</span></a>
+<a class="sourceLine" id="cb3-27" title="27"></a>
+<a class="sourceLine" id="cb3-28" title="28"><span class="co">-- StateOps</span></a>
+<a class="sourceLine" id="cb3-29" title="29"><span class="kw">instance</span> <span class="dt">MonadState</span> s (<span class="dt">StateEff</span> s) <span class="kw">where</span></a>
+<a class="sourceLine" id="cb3-30" title="30">  get <span class="ot">=</span> liftF <span class="op">$</span> <span class="dt">Get</span> <span class="fu">id</span></a>
+<a class="sourceLine" id="cb3-31" title="31">  put x <span class="ot">=</span> liftF <span class="op">$</span> <span class="dt">Put</span> x <span class="fu">id</span></a>
+<a class="sourceLine" id="cb3-32" title="32"></a>
+<a class="sourceLine" id="cb3-33" title="33"><span class="co">-- Effect Interpretations</span></a>
+<a class="sourceLine" id="cb3-34" title="34"><span class="ot">interpEnv ::</span> <span class="kw">forall</span> e a <span class="op">.</span> e <span class="ot">-&gt;</span> <span class="dt">EnvEff</span> e a <span class="ot">-&gt;</span> a</a>
+<a class="sourceLine" id="cb3-35" title="35">interpEnv e m <span class="ot">=</span> iter interp m</a>
+<a class="sourceLine" id="cb3-36" title="36"> <span class="kw">where</span></a>
+<a class="sourceLine" id="cb3-37" title="37">  interp (<span class="dt">Ask</span> cont) <span class="ot">=</span> cont e</a>
+<a class="sourceLine" id="cb3-38" title="38"></a>
+<a class="sourceLine" id="cb3-39" title="39"><span class="ot">interpState ::</span> <span class="kw">forall</span> s a <span class="op">.</span> <span class="dt">IORef</span> s <span class="ot">-&gt;</span> <span class="dt">StateEff</span> s a <span class="ot">-&gt;</span> <span class="dt">IO</span> a</a>
+<a class="sourceLine" id="cb3-40" title="40">interpState ref m <span class="ot">=</span> foldFree interp m</a>
+<a class="sourceLine" id="cb3-41" title="41"> <span class="kw">where</span></a>
+<a class="sourceLine" id="cb3-42" title="42">  interp (<span class="dt">Get</span> cont) <span class="ot">=</span> readIORef ref <span class="op">&gt;&gt;=</span> cont</a>
+<a class="sourceLine" id="cb3-43" title="43">  interp (<span class="dt">Put</span> x cont) <span class="ot">=</span> writeIORef ref x <span class="op">&gt;&gt;=</span> cont</a></code></pre></div>
+<p>Comparing to monad transformers, free monad introduces a few new concepts that makes the code look cleaner:</p>
+<p><strong>Co-Operation</strong> - A free effect is defined around the <em>co-operation</em> of an effect. A co-operation is dual to the operation of an effect - for instance if we stare and compare the co/operations of <code>StateEff</code> for long enough, we would make the following observation:</p>
+<ul>
+<li><p><code>StateOps</code> is the product of the operations <code>get</code> and <code>put</code>, while <code>StateCoOp</code> is the sum of the co-operations <code>Get</code> and <code>Put</code>.</p></li>
+<li><p>The argument types for operations in <code>StateOps</code> are joined with <code>(-&gt;)</code> forming a function, while the argument types for co-operations in <code>StateCoOp</code> are joined with <code>(,)</code> forming a tuple.</p></li>
+<li><p>The result type for an operation in <code>StateOps</code> indexed by value type <code>a</code> is the free effect <code>StateEff s a</code> returned by the operation functions; The result type for a co-operation in <code>StateCoOp</code> indexed by value type <code>a</code> is the <em>continuation</em> <code>(a -&gt; r)</code> for <em>any</em> r type in <code>StateCoOp s r</code>.</p></li>
+</ul>
+<p><strong>Effect Interpretation</strong> - Although the free monad is a <em>concrete</em> effect, it does not provide meaning directly to the computation. Instead it requires <em>interpretation</em> of the computation tree reified by the free monad. There are many ways we can interpret an effect. The most common approach is to use <code>foldFree</code>, which takes an interpreter with natural transformation <code>forall x . f x -&gt; m x</code> that interprets a <em>co-operation</em> <code>f</code> under another effect <code>m</code> for all continuation result <code>x</code>. The interpreter is used by <code>foldFree</code> to perform catamorphism on <code>Free f a</code> and the result of the interpretation becomes <code>m a</code></p>
+<h2 id="references">References</h2>
+<ul>
+<li><p><a href="https://github.com/yallop/effects-bibliography">Effects bibliography</a>, Jeremy Yallop</p></li>
+<li><p><a href="http://math.andrej.com/wp-content/uploads/2012/03/eff.pdf">Programming with Algebraic Effects and Handlers</a>, Andrej Bauer and Matija Pretnar</p></li>
+<li><p><a href="http://www.eff-lang.org/handlers-tutorial.pdf">An Introduction to Algebraic Effects and Handlers</a>, Matija Pretnar</p></li>
+<li><p><a href="https://arxiv.org/pdf/1807.05923.pdf">What is algebraic about algebraic effects and handlers?</a>, Andrej Bauer</p></li>
+<li><p><a href="http://okmij.org/ftp/Haskell/extensible/more.pdf">Freer monads, more extensible effects</a>, Oleg Kiselyov and Hiromi Ishii</p></li>
+<li><p><a href="http://homepages.inf.ed.ac.uk/slindley/papers/shallow-extended.pdf">Shallow Effect Handlers</a>, Daniel Hillerström and Sam Lindley</p></li>
+<li><p><a href="https://reasonablypolymorphic.com/blog/too-fast-too-free/">Freer Monads: Too Fast, Too Free</a>, Sandy Maguire</p></li>
+<li><p><a href="https://github.com/feuerbach/freemonad-benchmark">Free Monad Benchmarks</a>, Roman Cheplyaka</p></li>
+</ul>
+    </main>
+
+    <footer>
+      Content on this site is licensed under CC BY-NC 4.0
+      <a rel="license" href="http://creativecommons.org/licenses/by-nc/4.0/">
+        <img
+          alt="Creative Commons License"
+          style="border-width:0"
+          src="https://i.creativecommons.org/l/by-nc/4.0/88x31.png" />
+      </a>
+    </footer>
+  </body>
+</html>

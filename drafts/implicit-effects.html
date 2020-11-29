@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="x-ua-compatible" content="ie=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <meta property="og:title" content="Implicit Effects: Algebraic Effects in Haskell with Implicit Parameters | MaybeVoid">
+    <meta property="og:image"
+        content="https://maybevoid.com/images/maybevoid-logo-1152x1152.png">
+
+    <meta property="twitter:title" content="Implicit Effects: Algebraic Effects in Haskell with Implicit Parameters | MaybeVoid">
+    <meta property="twitter:site" content="@maybevoid">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image"
+        content="https://maybevoid.com/images/maybevoid-logo-1152x1152.png">
+
+    <title>Implicit Effects: Algebraic Effects in Haskell with Implicit Parameters | MaybeVoid</title>
+
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="icon" type="image/png" href="/images/maybevoid-icon-64.png">
+  </head>
+  <body>
+    <header>
+      <div class="logo">
+        <a href="/">
+          <img src="/images/maybevoid-logo-1152x246.png" />
+        </a>
+      </div>
+      <nav>
+        <a href="/pages/about.html">About</a>
+        <a href="/pages/wiki.html">Wiki</a>
+        <a href="/archive.html">Archive</a>
+      </nav>
+    </header>
+
+    <main role="main">
+      <h1>Implicit Effects: Algebraic Effects in Haskell with Implicit Parameters</h1>
+      <p><i> This is a draft post I am working on for releasing the Haskell library <code>implicit-effects</code>. For any feedback, please feel free to ping me through <a href="mailto:soareschen@maybevoid.com">email</a> or drop a comment directly in the <a href="https://github.com/maybevoid/maybevoid.com/commits/master/site/drafts/implicit-effects.md">latest commit</a>. </i></p>
+<h2 id="introduction">Introduction</h2>
+<p>In this post, I would like to introduce a new effects library called <code>implicit-effects</code> to the Haskell community. <code>implicit-effects</code> is an <em>experimental</em> effects library I developed with less than a year study into algebraic effects. I will share about the different approaches I use to implement algebraic effects in Haskell, which I think is worth <em>considering</em> or <em>explored further</em> by the Haskell community. However considering this is my first serious personal Haskell project, and given that I lacks professional experience in developing production quality Haskell applications, this is <em>not</em> a call for adoption for you to use <code>implicit-effects</code> in any serious Haskell projects. (At least not yet)</p>
+<p>In the following sections, we will first go through a brief overview of the current state of effects management in Haskell, and compare it to the full flexibility of coding in algebraic effects. We then observe the repeating patterns used in defining new effects, and learn about new concepts called operations and co-operations. We will see how with implicit parameters, we can bind effect operations into constraints without defining type classes. We then look at higher level structures, such as <code>Computation</code>, <code>Handler</code>, and <code>Pipeline</code>, can help us perform transformation on computations to give partial interpretation to effects. Finally we look at some example programs in Eff and see how we can implement them in Haskell using <code>implicit-effects</code>.</p>
+<h2 id="from-monad-to-extensible-effects">From Monad to Extensible Effects</h2>
+<p>The concept of monad was borrowed from category theory to Haskell, with one of its main use case is for allowing impure computation in a pure language using the <code>IO</code> monad. Since then Haskellers have written numerous tutorials to explain what monad is to the broader programming community. The abstraction behind monad may be difficult to grasp for newcomers, but it is the functionalities provided by implementing new monads that makes it worth learning deeper.</p>
+<h3 id="bare-monad">Bare Monad</h3>
+<p>When we first started learning monads, we typically come across few of the well known examples such as <code>Reader</code> and <code>State</code>, and they would look something as follow:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true"></a><span class="co">-- Effect Definitions</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true"></a><span class="kw">type</span> <span class="dt">Reader</span> r a <span class="ot">=</span> r <span class="ot">-&gt;</span> a</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true"></a><span class="kw">newtype</span> <span class="dt">State</span> s a <span class="ot">=</span> <span class="dt">State</span> {<span class="ot"> runState ::</span> s <span class="ot">-&gt;</span> (a,s) }</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true"></a></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true"></a><span class="co">-- Effect Implementations</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true"></a><span class="kw">instance</span> <span class="dt">Monad</span> ((<span class="ot">-&gt;</span>) r) <span class="kw">where</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true"></a>  <span class="fu">return</span> x <span class="ot">=</span> \_ <span class="ot">-&gt;</span> x</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true"></a>  h <span class="op">&gt;&gt;=</span> f <span class="ot">=</span> \w <span class="ot">-&gt;</span> f (h w) w</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true"></a></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true"></a><span class="kw">instance</span> <span class="dt">Monad</span> (<span class="dt">State</span> s) <span class="kw">where</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true"></a>  <span class="fu">return</span> x <span class="ot">=</span> <span class="dt">State</span> <span class="op">$</span> \s <span class="ot">-&gt;</span> (x,s)</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true"></a>  (<span class="dt">State</span> h) <span class="op">&gt;&gt;=</span> f <span class="ot">=</span> <span class="dt">State</span> <span class="op">$</span></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true"></a>    \s <span class="ot">-&gt;</span> <span class="kw">let</span> (a, s&#39;) <span class="ot">=</span> h s</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true"></a>              (<span class="dt">State</span> g) <span class="ot">=</span> f a</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true"></a>          <span class="kw">in</span>  g s&#39;</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true"></a></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true"></a><span class="co">-- Effect Operations</span></span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true"></a>ask <span class="ot">=</span> <span class="fu">id</span></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true"></a>get <span class="ot">=</span> <span class="dt">State</span> <span class="op">$</span> \s <span class="ot">-&gt;</span> (s,s)</span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true"></a>put s <span class="ot">=</span> <span class="dt">State</span> <span class="op">$</span> \s <span class="ot">-&gt;</span> ((),s)</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true"></a></span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true"></a><span class="co">-- Result Extractions</span></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true"></a>runReader <span class="ot">=</span> (<span class="op">$</span>)</span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true"></a>evalState <span class="ot">=</span> <span class="fu">fst</span> <span class="op">.</span> runState</span></code></pre></div>
+<p>As we implement more monads, a pattern arise and we find ourselves doing similar things each time. We first define new datatypes such as <code>type Reader</code> or <code>newtype State</code> to store the information required to carry out the monadic operations containing the desired effects. After that we define the <code>Monad</code> instance for these datatypes to give meaning to how <code>return</code> and <code>&gt;&gt;=</code> should behave. To make it convenient to the library users, we also define convenient functions such as <code>ask</code>, <code>get</code>, and <code>put</code> so that users can perform the desired actions inside the monad without knowing the details. Finally we define extraction functions so that we can extract a value <code>a</code> out of a monad <code>m</code> for any <code>m a</code>.</p>
+<p>An effect in its most basic form can be broken down into four parts:</p>
+<p><strong>Effect Definition</strong> - This defines the concept and “shape” of the effect through its type constructor / kind signature. We can see that <code>Reader</code> is an effect parameterized by a type <code>r</code>, while <code>State</code> is an effect parameterized by a type <code>s</code>. Both <code>Reader</code> and <code>State</code> have the type/kind <code>Type -&gt; (Type -&gt; Type)</code> - note the bracket on the right side is written explicitly to show it produces a monad type, which have the type <code>Type -&gt; Type</code>. Lastly, also note that the body of the type definition is kind of irrelevant from the user point of view. The author of an effect can choose to not expose the data constructors without affecting the users of an effect.</p>
+<p><strong>Effect Implementation</strong> - This turns the datatypes we defined into a <em>concrete</em> effect by making it a monad instance. With that we can perform the supported effectful computation under the given monad. In the example above, the implementation also performs <em>interpretation</em> of the effect through both the <code>Monad</code> instance and the datatype bodies. The concrete effect is also tied directly to the effect definition, which means we cannot define any alternative implementation that share the same effect definition. We will see in later sections how abstract implementations and free implementations allows multiple implementations of the same effect definition.</p>
+<p><strong>Effect Operation</strong> - The effect operations can be seen as the external API for an effect. For users of an effect, the only thing matter is the operation functions associated with the effect definition. An effect operation may accept zero or more arguments and return an effectful result wrapped under the associated monad <code>m</code>. The body of the operation defines how the operation is translated to the underlying concrete effect, but that detail is not important to the user.</p>
+<p><strong>Result Extraction</strong> - Many effect implementations build up <em>contexts</em> when executing effectful computations, and then extract result from the final context returned from the end of the computation. The context typically require additional arguments for the result to be extracted, such as the initial state for the State monad. In the above example, the context is defined directly in the body of the effect definition. As a result the bind operator of the <code>Monad</code> instances also have to take care of the monadic binding of the contexts. Tight coupling between the context and monadic bind is one major source of complexity, and we will learn in later sections how algebraic effects decouples the context from the monad.</p>
+<h3 id="monad-transformers">Monad Transformers</h3>
+<p>Effects defined with the bare monad approach as described in the earlier section is relatively easy to understand, but it suffers from non-composability of monads. What happen if we want to perform an effectful computation that uses operations from both the <code>Reader</code> and <code>State</code> monad? We wouldn’t able to reuse the code we defined earlier, and instead we would have to define a whole new effect definition that includes both operations, and scratch our heads on how to implement <code>(&gt;&gt;=)</code> for the combined contexts.</p>
+<p>Fortunately with monad transformers, we gain back some extensibilty we lost from using bare monads. We would instead define our reader and state effects as <code>ReaderT</code> and <code>StateT</code>.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true"></a><span class="co">-- Concrete Effects</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true"></a><span class="kw">newtype</span> <span class="dt">ReaderT</span> r m a <span class="ot">=</span> <span class="dt">ReaderT</span> {</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true"></a><span class="ot">  runReaderT ::</span> r <span class="ot">-&gt;</span> m a</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true"></a>}</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true"></a></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true"></a><span class="kw">newtype</span> <span class="dt">StateT</span> s m a <span class="ot">=</span> <span class="dt">StateT</span> {</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true"></a><span class="ot">  runStateT ::</span> s <span class="ot">-&gt;</span> m (a, s)</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true"></a>}</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true"></a></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true"></a><span class="co">-- Abstract Effect</span></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true"></a><span class="kw">class</span> <span class="dt">Monad</span> m <span class="ot">=&gt;</span> <span class="dt">MonadReader</span> r m <span class="op">|</span> m <span class="ot">-&gt;</span> r</span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true"></a> <span class="kw">where</span></span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true"></a>  <span class="co">-- Effect Operations</span></span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true"></a><span class="ot">  ask ::</span> m r</span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true"></a></span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true"></a><span class="co">-- Abstract Effect</span></span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true"></a><span class="kw">class</span> <span class="dt">Monad</span> m <span class="ot">=&gt;</span> <span class="dt">MonadState</span> s m <span class="op">|</span> m <span class="ot">-&gt;</span> s</span>
+<span id="cb2-18"><a href="#cb2-18" aria-hidden="true"></a> <span class="kw">where</span></span>
+<span id="cb2-19"><a href="#cb2-19" aria-hidden="true"></a>  <span class="co">-- Effect Operations</span></span>
+<span id="cb2-20"><a href="#cb2-20" aria-hidden="true"></a><span class="ot">  get ::</span> m s</span>
+<span id="cb2-21"><a href="#cb2-21" aria-hidden="true"></a><span class="ot">  put ::</span> s <span class="ot">-&gt;</span> m ()</span></code></pre></div>
+<p>In the monad transformer approach, each effect definition is parameterized by an effect <code>m</code> in addition to the result type <code>a</code> of a bare monad. A monad transformer <code>t</code> basically takes any monad <code>m</code> and form a new monad <code>t m</code>. With some <code>FlexibleInstances</code> derivations through the <code>MonadTrans</code> class, the transformed monad <code>t m</code> supports all the existing effects and operations of the inner monad <code>m</code> in addition to new effects and operations introduced by <code>t</code>.</p>
+<p>There are also some new concepts introduced:</p>
+<p><strong>Concrete Effects</strong> - <code>ReaderT</code> and <code>StateT</code> are now definitions of concrete effects. They still define the contexts in the body and implement the <code>Monad</code> instance, but users of the effects no longer need to access them directly.</p>
+<p><strong>Abstract Effects</strong> - <code>MonadReader</code> and <code>MonadState</code> are definitions of <em>abstract</em> effects. The effects are defined as a typeclass, with its associated operations defined as methods of the class. This allows multiple concrete effects to be implemented for a given abstract effect. Computations that uses a <code>MonadState s</code> effect for example do not need to care whether it is running under a <code>MonadState s (ReaderT r m)</code> or a <code>ReaderT r (MonadState s m)</code>, or even a custom <code>MyStateEff s</code> monad.</p>
+<p>The monad transformers approach is well known and battle-tested, in particular with the MTL library. It provides moderate extensibility through type classes, and is optimized over time to have high performance. However defining new effects through typeclasses is not always straightforward, requiring users to have intricate knowledge of various GHC extensions to implement or even use a given effect under their specific monad. The limitation of typeclasses also makes it difficult to implement some of the algebraic effects examples using monad transformers alone.</p>
+<h3 id="free-monad">Free Monad</h3>
+<p>The monad transformer approach provides a somewhat extensible way to create custom effects. However it still have a tight coupling between the <em>concrete</em> effect, <em>interpretation</em> of the effect, and the <em>context</em> for the interpretation. In order to give new meaning or interpretation to an abstract effect, we must define a new datatype and provide at least instances of <code>Functor</code>, <code>Applicative</code>, and <code>Monad</code>.</p>
+<p>Because of this, Haskellers tend to conflate between the concepts of <em>monad</em> and <em>effects</em>. It is common that defining new effects is synonymous to defining datatypes with <code>Monad</code> instances. Free monad changes this by making it possible to create and interpret effects without implementing a <code>Monad</code> instance for it.</p>
+<p>The concept of free monad also comes from category theory. Roughly it means we can get a monad for free for any <code>Functor</code> instance <code>f</code>. The <code>Free f</code> monad instance builds up a computation tree in <code>(&gt;&gt;=)</code>, which then requires further interpretation to give actual meaning to the computation.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true"></a><span class="kw">import</span> <span class="dt">Control.Monad.Free</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true"></a></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true"></a><span class="co">-- From Control.Monad.Free</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true"></a><span class="kw">data</span> <span class="dt">Free</span> f a</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true"></a>  <span class="ot">=</span> <span class="dt">Pure</span> a</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true"></a>  <span class="op">|</span> <span class="dt">Free</span> (f (<span class="dt">Free</span> f a))</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true"></a></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true"></a><span class="co">-- Effect Co-operations</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true"></a><span class="kw">data</span> <span class="dt">EnvCoOp</span> e r</span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true"></a>  <span class="ot">=</span> <span class="dt">Ask</span> (e <span class="ot">-&gt;</span> r)</span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true"></a>  <span class="kw">deriving</span> (<span class="dt">Functor</span>)</span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true"></a></span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true"></a><span class="kw">data</span> <span class="dt">StateCoOp</span> s r</span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true"></a>  <span class="ot">=</span> <span class="dt">Get</span> (s <span class="ot">-&gt;</span> r)</span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true"></a>  <span class="op">|</span> <span class="dt">Put</span> s (() <span class="ot">-&gt;</span> r)</span>
+<span id="cb3-16"><a href="#cb3-16" aria-hidden="true"></a>  <span class="kw">deriving</span> (<span class="dt">Functor</span>)</span>
+<span id="cb3-17"><a href="#cb3-17" aria-hidden="true"></a></span>
+<span id="cb3-18"><a href="#cb3-18" aria-hidden="true"></a><span class="co">-- Free Effects</span></span>
+<span id="cb3-19"><a href="#cb3-19" aria-hidden="true"></a><span class="kw">type</span> <span class="dt">EnvEff</span> e a <span class="ot">=</span> <span class="dt">Free</span> (<span class="dt">EnvCoOp</span> e) a</span>
+<span id="cb3-20"><a href="#cb3-20" aria-hidden="true"></a><span class="kw">type</span> <span class="dt">StateEff</span> s a <span class="ot">=</span> <span class="dt">Free</span> (<span class="dt">StateCoOp</span> s) a</span>
+<span id="cb3-21"><a href="#cb3-21" aria-hidden="true"></a></span>
+<span id="cb3-22"><a href="#cb3-22" aria-hidden="true"></a><span class="co">-- Effect Operations</span></span>
+<span id="cb3-23"><a href="#cb3-23" aria-hidden="true"></a></span>
+<span id="cb3-24"><a href="#cb3-24" aria-hidden="true"></a><span class="co">-- EnvOps</span></span>
+<span id="cb3-25"><a href="#cb3-25" aria-hidden="true"></a><span class="kw">instance</span> <span class="dt">MonadReader</span> e (<span class="dt">EnvEff</span> e) <span class="kw">where</span></span>
+<span id="cb3-26"><a href="#cb3-26" aria-hidden="true"></a>  ask <span class="ot">=</span> liftF <span class="op">$</span> <span class="dt">Ask</span> <span class="fu">id</span></span>
+<span id="cb3-27"><a href="#cb3-27" aria-hidden="true"></a></span>
+<span id="cb3-28"><a href="#cb3-28" aria-hidden="true"></a><span class="co">-- StateOps</span></span>
+<span id="cb3-29"><a href="#cb3-29" aria-hidden="true"></a><span class="kw">instance</span> <span class="dt">MonadState</span> s (<span class="dt">StateEff</span> s) <span class="kw">where</span></span>
+<span id="cb3-30"><a href="#cb3-30" aria-hidden="true"></a>  get <span class="ot">=</span> liftF <span class="op">$</span> <span class="dt">Get</span> <span class="fu">id</span></span>
+<span id="cb3-31"><a href="#cb3-31" aria-hidden="true"></a>  put x <span class="ot">=</span> liftF <span class="op">$</span> <span class="dt">Put</span> x <span class="fu">id</span></span>
+<span id="cb3-32"><a href="#cb3-32" aria-hidden="true"></a></span>
+<span id="cb3-33"><a href="#cb3-33" aria-hidden="true"></a><span class="co">-- Effect Interpretations</span></span>
+<span id="cb3-34"><a href="#cb3-34" aria-hidden="true"></a><span class="ot">interpEnv ::</span> <span class="kw">forall</span> e a <span class="op">.</span> e <span class="ot">-&gt;</span> <span class="dt">EnvEff</span> e a <span class="ot">-&gt;</span> a</span>
+<span id="cb3-35"><a href="#cb3-35" aria-hidden="true"></a>interpEnv e m <span class="ot">=</span> iter interp m</span>
+<span id="cb3-36"><a href="#cb3-36" aria-hidden="true"></a> <span class="kw">where</span></span>
+<span id="cb3-37"><a href="#cb3-37" aria-hidden="true"></a>  interp (<span class="dt">Ask</span> cont) <span class="ot">=</span> cont e</span>
+<span id="cb3-38"><a href="#cb3-38" aria-hidden="true"></a></span>
+<span id="cb3-39"><a href="#cb3-39" aria-hidden="true"></a><span class="ot">interpState ::</span> <span class="kw">forall</span> s a <span class="op">.</span> <span class="dt">IORef</span> s <span class="ot">-&gt;</span> <span class="dt">StateEff</span> s a <span class="ot">-&gt;</span> <span class="dt">IO</span> a</span>
+<span id="cb3-40"><a href="#cb3-40" aria-hidden="true"></a>interpState ref m <span class="ot">=</span> foldFree interp m</span>
+<span id="cb3-41"><a href="#cb3-41" aria-hidden="true"></a> <span class="kw">where</span></span>
+<span id="cb3-42"><a href="#cb3-42" aria-hidden="true"></a>  interp (<span class="dt">Get</span> cont) <span class="ot">=</span> readIORef ref <span class="op">&gt;&gt;=</span> cont</span>
+<span id="cb3-43"><a href="#cb3-43" aria-hidden="true"></a>  interp (<span class="dt">Put</span> x cont) <span class="ot">=</span> writeIORef ref x <span class="op">&gt;&gt;=</span> cont</span></code></pre></div>
+<p>Comparing to monad transformers, free monad introduces a few new concepts that makes the code look cleaner:</p>
+<p><strong>Co-Operation</strong> - A free effect is defined around the <em>co-operation</em> of an effect. A co-operation is dual to the operation of an effect - for instance if we stare and compare the co/operations of <code>StateEff</code> for long enough, we would make the following observation:</p>
+<ul>
+<li><p><code>StateOps</code> is the product of the operations <code>get</code> and <code>put</code>, while <code>StateCoOp</code> is the sum of the co-operations <code>Get</code> and <code>Put</code>.</p></li>
+<li><p>The argument types for operations in <code>StateOps</code> are joined with <code>(-&gt;)</code> forming a function, while the argument types for co-operations in <code>StateCoOp</code> are joined with <code>(,)</code> forming a tuple.</p></li>
+<li><p>The result type for an operation in <code>StateOps</code> indexed by value type <code>a</code> is the free effect <code>StateEff s a</code> returned by the operation functions; The result type for a co-operation in <code>StateCoOp</code> indexed by value type <code>a</code> is the <em>continuation</em> <code>(a -&gt; r)</code> for <em>any</em> r type in <code>StateCoOp s r</code>.</p></li>
+</ul>
+<p><strong>Effect Interpretation</strong> - Although the free monad is a <em>concrete</em> effect, it does not provide meaning directly to the computation. Instead it requires <em>interpretation</em> of the computation tree reified by the free monad. There are many ways we can interpret an effect. The most common approach is to use <code>foldFree</code>, which takes an interpreter with natural transformation <code>forall x . f x -&gt; m x</code> that interprets a <em>co-operation</em> <code>f</code> under another effect <code>m</code> for all continuation result <code>x</code>. The interpreter is used by <code>foldFree</code> to perform catamorphism on <code>Free f a</code> and the result of the interpretation becomes <code>m a</code></p>
+<p><strong>Free Effects</strong> - Free effects are concrete effects in the sense that they have a concrete implementation of a monad instance. This means unlike abstract effects, computations that directly use a free effect are tied to a particular implementation of free effects. Over the years there are many free effects libraries published, including <code>free</code>, <code>freer-simple</code>, <code>extensible-effects</code>, <code>fused-effects</code>, etc. Most of the time, these libraries expect users to use the free effect they offer for <em>all</em> their application code. This often amplifies concerns such as performance issues of free effects, as users are locked in to using one free effect implementation and may not able to switch out easily. A better approach would be to define computations to use abstract effects such as <code>MonadState</code>, so that they can still interprete the effects in other ways through either alternative free effects or other concrete effects.</p>
+<h3 id="handler-pattern">Handler Pattern</h3>
+<p>Although free effects offer a lot of flexibilities in effect interpretation, it also introduce additional complexities even in common cases that don’t need advanced effect interpretations. Consider a time effect that gets the current system time:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true"></a><span class="kw">class</span> <span class="dt">Monad</span> m <span class="ot">=&gt;</span> <span class="dt">MonadTime</span> m <span class="kw">where</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true"></a><span class="ot">  currentTime ::</span> m <span class="dt">UTCTime</span></span></code></pre></div>
+<p>The <code>MonadTime</code> class provides an abstract interface to the time effect. However implementing the class instance all possible monad transformer stacks may prove to be a challenge to anyone without deep understanding on typeclasses. The free effect approach may provide more flexibility, but the boilerplate is not very intuitive and may look confusing.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true"></a><span class="kw">data</span> <span class="dt">TimeCoOp</span> r <span class="ot">=</span> <span class="dt">CurrentTime</span> (<span class="dt">UTCTime</span> <span class="ot">-&gt;</span> r)</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true"></a>  <span class="kw">deriving</span> (<span class="dt">Functor</span>)</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true"></a></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true"></a><span class="kw">type</span> <span class="dt">TimeEff</span> e a <span class="ot">=</span> <span class="dt">Free</span> <span class="dt">TimeCoOp</span> a</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true"></a></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true"></a><span class="ot">interpTime ::</span> <span class="kw">forall</span> s a <span class="op">.</span> <span class="dt">TimeEff</span> a <span class="ot">-&gt;</span> <span class="dt">IO</span> a</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true"></a>interpTime ref m <span class="ot">=</span> foldFree interp m</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true"></a> <span class="kw">where</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true"></a>  interp (<span class="dt">CurrentTime</span> cont) <span class="ot">=</span> getCurrentTime <span class="op">&gt;&gt;=</span> cont</span></code></pre></div>
+<p>The use of free effects can get even more confusing when interpretation of multiple effects are needed, adding additional noise to an effect with rather simple default implementation.</p>
+<p>People soon realize in most cases custom effects can be interpreted directly in terms of an outer effect such as <code>IO</code>. In such cases the complexities of monad transformers and free effects may cost too much effort when all they need is <code>IO</code> with some mocking capability.</p>
+<p>The handler pattern is an alternative effect pattern that arise to implement and interpret simple effects:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true"></a><span class="co">-- Effect Operations</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true"></a><span class="kw">data</span> <span class="dt">AppOps</span> eff <span class="ot">=</span> <span class="dt">AppOps</span> {</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true"></a><span class="ot">  currentTime ::</span> eff <span class="dt">UTCTime</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true"></a>  <span class="op">...</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true"></a>}</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true"></a></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true"></a><span class="ot">defaultAppOps ::</span> <span class="dt">AppOps</span> <span class="dt">IO</span></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true"></a>defaultAppOps <span class="ot">=</span> <span class="dt">AppOps</span> {</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true"></a>  currentTime <span class="ot">=</span> getCurrentTime</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true"></a>  <span class="op">...</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true"></a>}</span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true"></a></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true"></a><span class="ot">mockAppOps ::</span> <span class="dt">AppOps</span> <span class="dt">IO</span></span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true"></a>mockAppOps <span class="ot">=</span> <span class="dt">AppOps</span> {</span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true"></a>  currentTime <span class="ot">=</span> <span class="fu">return</span> <span class="op">$</span> <span class="op">...</span> <span class="co">-- return mock time</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true"></a>  <span class="op">...</span></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true"></a>}</span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true"></a></span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true"></a><span class="ot">app ::</span> <span class="kw">forall</span> eff <span class="op">.</span> <span class="dt">AppOps</span> eff <span class="ot">-&gt;</span> eff ()</span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true"></a>app ops <span class="ot">=</span> <span class="kw">do</span></span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true"></a>  <span class="op">...</span></span>
+<span id="cb6-22"><a href="#cb6-22" aria-hidden="true"></a>  time <span class="ot">&lt;-</span> currentTime ops</span>
+<span id="cb6-23"><a href="#cb6-23" aria-hidden="true"></a>  <span class="op">...</span></span>
+<span id="cb6-24"><a href="#cb6-24" aria-hidden="true"></a></span>
+<span id="cb6-25"><a href="#cb6-25" aria-hidden="true"></a><span class="ot">defaultApp ::</span> <span class="dt">IO</span> ()</span>
+<span id="cb6-26"><a href="#cb6-26" aria-hidden="true"></a>defaultApp <span class="ot">=</span> app defaultAppOps</span></code></pre></div>
+<p>Using the handler pattern, there is almost no advanced Haskell feature used, and the code becomes much easier to understand. Comparing more carefully with the previous examples, we may notice there are still some similarities.</p>
+<p>In the handler pattern, we are effectively sacrificing most of the power of effect systems and keep only the effect operations. The <code>AppOps</code> type is essentially the union of all simple effect operations that can implemented using another effect <code>eff</code>, typically <code>IO</code>. We then pass around the effect operations as function arguments, instead of passing them implicitly via typeclass constraints.</p>
+<p>Since the effect operations are passed explicitly, it is much easier to replace the effect implementation. There is no need to declare a newtype wrapper around the base effect just to allow for different typeclass instances. As we are working mostly on a base effect like <code>IO</code>, we get to reason about our applications much easily.</p>
+<p>On the down side, the handler pattern makes it much harder if we want to interpret or compose effects in more advanced ways. we want to wrap a <code>StateT</code> around our base effect, we would at least need to redefine our effect operations around that new base effect. Working with everything in <code>IO</code> also partially forgo the advantage of coding in a purely functional language like Haskell, as we can no longer reason about what exact side effects have happened when our app returns a single <code>IO</code>.</p>
+<p>Nevertheless, the simplicity of the handler pattern is worth considering. What we really want to find out, is whether there is any way to implement our effect operations similar to the handler pattern when it can be interpreted with another base effect, without limiting the power of the effect system? Ideally we’d like something as follow:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode haskell"><code class="sourceCode haskell"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true"></a><span class="kw">data</span> <span class="dt">TimeOps</span> eff <span class="ot">=</span> <span class="dt">TimeOps</span> {</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true"></a><span class="ot">  currentTime ::</span> eff <span class="dt">UTCTime</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true"></a>}</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true"></a></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true"></a><span class="ot">app1 ::</span> <span class="kw">forall</span> eff <span class="op">.</span> (<span class="dt">Monad</span> eff, <span class="dt">MonadTime</span> eff) <span class="ot">=&gt;</span> eff ()</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true"></a>app1 <span class="ot">=</span> <span class="op">...</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true"></a></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true"></a><span class="ot">timeOps ::</span> <span class="dt">TimeOps</span> <span class="dt">IO</span> {</span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true"></a>  currentTime <span class="ot">=</span> getCurrentTime</span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true"></a>}</span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true"></a></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true"></a><span class="co">-- withOps :: ???</span></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true"></a><span class="ot">app2 ::</span> <span class="dt">IO</span> ()</span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true"></a><span class="ot">app2 ::</span> withOps timeOps app</span></code></pre></div>
+<p>As we will see in later sections, the “magical” <code>withOps</code> function is one of the missing pieces we will implement to get a simple yet powerful effect system with <code>implicit-effects</code>.</p>
+<h2 id="algebraic-effects">Algebraic Effects</h2>
+<p>We are going take a detour away from Haskell and look at Eff, a research language that implements algebraic effects. Algebraic effects is an emerging programming language concept that is getting pushed for adoption in a number of programming languages. It is similar to the effects systems and patterns in Haskell, but is more generalized and more powerful. In languages such as Eff, effect is a built in construct and thus require much less boilerplate as compared to Haskell, which we have to encode effects using the existing type system.</p>
+<h3 id="state-effect-in-eff">State Effect in Eff</h3>
+<p>Let’s look at an example definition and implementation of the state effect in Eff:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode ocaml"><code class="sourceCode ocaml"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true"></a><span class="co">(* Effect Definitions *)</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true"></a>effect Get : <span class="dt">int</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true"></a>effect Put : <span class="dt">int</span> -&gt; <span class="dt">unit</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true"></a></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true"></a><span class="co">(* Effect Handlers *)</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true"></a><span class="co">(* state :: forall a ε . Int -&gt; (() -&gt; a!{Get, Put | ε}) -&gt; (() -&gt; a!{|ε}) *)</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true"></a><span class="kw">let</span> state initial = handler</span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true"></a>  <span class="co">(* Effect Interpretations *)</span></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true"></a></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true"></a>  <span class="co">(* Get (Int -&gt; (Int -&gt; a)) -&gt; (Int -&gt; a) *)</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true"></a>  | effect Get k -&gt; (<span class="kw">fun</span> m -&gt; continue k m m)</span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true"></a></span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true"></a>  <span class="co">(* Put Int (() -&gt; (Int -&gt; a)) -&gt; (Int -&gt; a)  *)</span></span>
+<span id="cb8-14"><a href="#cb8-14" aria-hidden="true"></a>  | effect (Put n) k -&gt; (<span class="kw">fun</span> m -&gt; continue k () n)</span>
+<span id="cb8-15"><a href="#cb8-15" aria-hidden="true"></a></span>
+<span id="cb8-16"><a href="#cb8-16" aria-hidden="true"></a>  <span class="co">(* Context initialization *)</span></span>
+<span id="cb8-17"><a href="#cb8-17" aria-hidden="true"></a>  <span class="co">(* return :: a -&gt; (Int -&gt; a)  *)</span></span>
+<span id="cb8-18"><a href="#cb8-18" aria-hidden="true"></a>  | x -&gt; (<span class="kw">fun</span> _ -&gt; x)</span>
+<span id="cb8-19"><a href="#cb8-19" aria-hidden="true"></a></span>
+<span id="cb8-20"><a href="#cb8-20" aria-hidden="true"></a>  <span class="co">(* Result extraction *)</span></span>
+<span id="cb8-21"><a href="#cb8-21" aria-hidden="true"></a>  <span class="co">(* finally :: (Int -&gt; a) -&gt; a *)</span></span>
+<span id="cb8-22"><a href="#cb8-22" aria-hidden="true"></a>  | finally g -&gt; g initial</span>
+<span id="cb8-23"><a href="#cb8-23" aria-hidden="true"></a>;;</span>
+<span id="cb8-24"><a href="#cb8-24" aria-hidden="true"></a></span>
+<span id="cb8-25"><a href="#cb8-25" aria-hidden="true"></a><span class="co">(* Computations *)</span></span>
+<span id="cb8-26"><a href="#cb8-26" aria-hidden="true"></a><span class="co">(* comp1 :: () -&gt; Int!{Get, Put} *)</span></span>
+<span id="cb8-27"><a href="#cb8-27" aria-hidden="true"></a><span class="kw">let</span> comp1 () : <span class="dt">int</span> =</span>
+<span id="cb8-28"><a href="#cb8-28" aria-hidden="true"></a>  <span class="kw">let</span> x1 = perform Get <span class="kw">in</span></span>
+<span id="cb8-29"><a href="#cb8-29" aria-hidden="true"></a>  perform (Put x1 + <span class="dv">1</span>);</span>
+<span id="cb8-30"><a href="#cb8-30" aria-hidden="true"></a>  x1 + <span class="dv">2</span></span>
+<span id="cb8-31"><a href="#cb8-31" aria-hidden="true"></a>;;</span>
+<span id="cb8-32"><a href="#cb8-32" aria-hidden="true"></a></span>
+<span id="cb8-33"><a href="#cb8-33" aria-hidden="true"></a><span class="co">(* comp2 :: () -&gt; Int!{Get, Put} *)</span></span>
+<span id="cb8-34"><a href="#cb8-34" aria-hidden="true"></a><span class="kw">let</span> comp2 () : <span class="dt">int</span> =</span>
+<span id="cb8-35"><a href="#cb8-35" aria-hidden="true"></a>  <span class="kw">let</span> x1 = comp1 () <span class="kw">in</span></span>
+<span id="cb8-36"><a href="#cb8-36" aria-hidden="true"></a>  <span class="kw">let</span> x2 = comp1 () <span class="kw">in</span></span>
+<span id="cb8-37"><a href="#cb8-37" aria-hidden="true"></a>  x1 + x2</span>
+<span id="cb8-38"><a href="#cb8-38" aria-hidden="true"></a>;;</span>
+<span id="cb8-39"><a href="#cb8-39" aria-hidden="true"></a></span>
+<span id="cb8-40"><a href="#cb8-40" aria-hidden="true"></a><span class="co">(* Effect handling *)</span></span>
+<span id="cb8-41"><a href="#cb8-41" aria-hidden="true"></a><span class="co">(* val res : int = 9 *)</span></span>
+<span id="cb8-42"><a href="#cb8-42" aria-hidden="true"></a><span class="kw">let</span> res = <span class="kw">with</span> state <span class="dv">2</span> handle comp2 ()</span></code></pre></div>
+<p>We can make several observations:</p>
+<p><strong>Effect Definitions</strong> - In Eff both the effect operations and co-operations are defined together with the <code>effect</code> statement. The result type does not need to be parameterized by a effect variable, as all functions in Eff can invoke arbitrary effects in the body. When an effect is handled inside an effect handler, it is passed in the co-operation form, e.g. <code>(Put n) k</code> where k represents the continuation. When an effect is used by a computation, it is called in the operation form, e.g. <code>(Put x)</code>, and the monadic result is implicitly unwraped as return value to the caller.</p>
+<p><strong>Effect Handlers</strong> - In Eff an effect handler is defined using the <code>handler</code> construct and can handle any number of effects whether they are related or not. In the above example <code>Get</code> and <code>Put</code> are two separate effects that are handled as a whole by the <code>state</code> effect handler. Here we have taken some liberty to annotate the types of the Eff statements in a pseudo Haskell-like syntax extended with the effect row notation <code>!{}</code>. Note that these are not actual type signatures as the constructs are not regular functions in Eff.</p>
+<p>The <code>state</code> effect handler have the conceptual type somewhere along the line of <code>forall a ε . Int -&gt; (() -&gt; a!{Get, Put | ε}) -&gt; (() -&gt; a!{|ε})</code>. It means given an initial state of type <code>Int</code>, and a computation thunk <code>() -&gt; a!{Get, Put | ε}</code> that would produce an effectful value of type <code>a</code> that makes use of the effects <code>Get</code> and <code>Put</code> optionally with additional effects <code>ε</code>, it returns a new computation thunk <code>(() -&gt; a!{|ε})</code> that no longer depends on the <code>Get</code> and <code>Put</code> effects when called.</p>
+<p>The second last handler statement <code>x -&gt; (fun _ -&gt; x)</code> is the return handler with the effective type <code>a -&gt; (Int -&gt; a)</code>. It wraps a pure value of type <code>a</code> into a context of type <code>(Int -&gt; a)</code> so that the context can be built up and get called with the initial state by the finalizer. We can notice this is pretty much the same as how the <code>State</code> monad in Haskell implements the monadic <code>return</code>.</p>
+<p>The first two handler statements handles the <code>Get</code> and <code>Put</code> effects. They get access to the continuation <code>k</code> as the second argument. The handlers extend the original context built up by the return handler and return a new <code>Int -&gt; a</code> in its result. There may be potential confusion when we then try to determine the type of <code>k</code>. The first argument to <code>k</code> is the type of the result of an effectful operation - <code>Int</code> for <code>Get</code> and <code>()</code> for <code>Put</code>. But the result type of <code>k</code> is the context returned from the return handler, <code>Int -&gt; a</code>. In other words, the <code>Get</code> and <code>Put</code> effect handlers create a new context <code>Int -&gt; a</code>, which accepts for the current state value then calls the continuation to get the inner context and then pass the new state to it.</p>
+<p>The finalizer in the <code>finally</code> statement extracts the final result out of the state context <code>g</code> of type <code>Int -&gt; a</code> by calling it with the initial state <code>initial</code>. This is how we get back our computation result <code>a</code> and is akin to <code>evalState</code> of the <code>State</code> monad in Haskell.</p>
+<p><strong>Computation</strong> - In Eff any function can perform effectful computation, and the expressions strongly resembles regular OCaml expressions. To call an effect operation, the <code>perform</code> keyword is used in place of a function call. Since <code>perform</code> also forms an expression, its return value can be used directly in other expressions such as <code>let</code> without having to bind a monadic value through <code>do</code> blocks or <code>(&gt;&gt;=)</code> like in Haskell.</p>
+<p>Strictly speaking, <code>comp1</code> and <code>comp2</code> should have a type like <code>() -&gt; Int!{Get, Put}</code>. But in Eff the effects used by a function are not tracked in its type signature. As a result we cannot generally know what effects are used in a function. This makes Eff a static typed language with dynamic effect system. As all effects in Eff must be handled when an expression is evaluated, calling an unhandled effect would get handled by an unhandled effect handler resulting in the program crashing.</p>
+<p>The fact that all effects must be handled during evaluation is also why <code>comp1</code> and <code>comp2</code> are functions of type <code>() -&gt; Int!{Get, Put}</code> instead of expressions of type <code>Int!{Get, Put}</code>. Since we don’t want <code>comp1</code> and <code>comp2</code> to bind with fixed effect handlers, we wrap them in a function so that the effects can be handled by different effect handlers only when the functions are called.</p>
+<p><strong>Effect Handling</strong> - In Eff effects are handled using the <code>with .. handle ..</code> expression. The expression after <code>with</code> should be an expression of type <code>handler</code> created from the <code>handler</code> expression. The expression after <code>handle</code> should be an expression that is expected to invoke effect operations that would get handled by the effect handler. Any effect that is not handled by the handler in <code>with</code> would get propogated to the outer scope, until it is handled or result in unhandled effect handler.</p>
+<h3 id="choice-effect-in-eff">Choice Effect in Eff</h3>
+<p>We can see from earlier example that with built in language constructs for effects, we can express effects more elegantly in Eff than in Haskell. However the full advantage of algebraic effects in Eff is not just the syntactic constructs, but also new ways of structuring our code to solve different problems. One particular strength is the access to the continuation <code>k</code> in our effect handlers. Since we have access to the continuation, we can choose to resume it more than one times, or discard the continuation and halting the computation.</p>
+<p>Consider the following Eff example for a choice effect:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode ocaml"><code class="sourceCode ocaml"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true"></a><span class="co">(* Effect Definitions *)</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true"></a>effect Decide : <span class="dt">bool</span>;;</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true"></a></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true"></a><span class="co">(* Effect Handlers *)</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true"></a><span class="co">(* choose_true :: forall a ε . (() -&gt; a!{Decide | ε}) -&gt; (() -&gt; a!{|ε}) *)</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true"></a><span class="kw">let</span> choose_true = handler</span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true"></a>  <span class="co">(* Decide (Bool -&gt; a) -&gt; a *)</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true"></a>  | effect Decide k -&gt; continue k <span class="kw">true</span>;;</span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true"></a></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true"></a>  <span class="co">(* default return *)</span></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true"></a>  <span class="co">(* return :: a -&gt; a *)</span></span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true"></a>  <span class="co">(* | x -&gt; x *)</span></span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true"></a></span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true"></a><span class="co">(* choose_all :: forall a ε . (() -&gt; a!{Decide | ε}) -&gt; (() -&gt; [a]!{|ε}) *)</span></span>
+<span id="cb9-15"><a href="#cb9-15" aria-hidden="true"></a><span class="kw">let</span> choose_all = handler</span>
+<span id="cb9-16"><a href="#cb9-16" aria-hidden="true"></a>  <span class="co">(* Decide (Bool -&gt; [a]) -&gt; [a] *)</span></span>
+<span id="cb9-17"><a href="#cb9-17" aria-hidden="true"></a>  | effect Decide k -&gt; continue k <span class="kw">true</span> @ continue k <span class="kw">false</span></span>
+<span id="cb9-18"><a href="#cb9-18" aria-hidden="true"></a></span>
+<span id="cb9-19"><a href="#cb9-19" aria-hidden="true"></a>  <span class="co">(* return :: a -&gt; [a] *)</span></span>
+<span id="cb9-20"><a href="#cb9-20" aria-hidden="true"></a>  | x -&gt; [x]</span>
+<span id="cb9-21"><a href="#cb9-21" aria-hidden="true"></a>;;</span>
+<span id="cb9-22"><a href="#cb9-22" aria-hidden="true"></a></span>
+<span id="cb9-23"><a href="#cb9-23" aria-hidden="true"></a><span class="co">(* comp1 :: () -&gt; Int!{Decide} *)</span></span>
+<span id="cb9-24"><a href="#cb9-24" aria-hidden="true"></a><span class="kw">let</span> comp1 () : <span class="dt">int</span> =</span>
+<span id="cb9-25"><a href="#cb9-25" aria-hidden="true"></a>  <span class="kw">let</span> x = (<span class="kw">if</span> perform Decide <span class="kw">then</span> <span class="dv">10</span> <span class="kw">else</span> <span class="dv">20</span>) <span class="kw">in</span></span>
+<span id="cb9-26"><a href="#cb9-26" aria-hidden="true"></a>  <span class="kw">let</span> y = (<span class="kw">if</span> perform Decide <span class="kw">then</span> <span class="dv">0</span> <span class="kw">else</span> <span class="dv">5</span>) <span class="kw">in</span></span>
+<span id="cb9-27"><a href="#cb9-27" aria-hidden="true"></a>  x - y</span>
+<span id="cb9-28"><a href="#cb9-28" aria-hidden="true"></a>;;</span>
+<span id="cb9-29"><a href="#cb9-29" aria-hidden="true"></a></span>
+<span id="cb9-30"><a href="#cb9-30" aria-hidden="true"></a><span class="co">(* val res1 : int = 10 *)</span></span>
+<span id="cb9-31"><a href="#cb9-31" aria-hidden="true"></a><span class="kw">let</span> res1 = <span class="kw">with</span> choose_true handle comp1 ()</span>
+<span id="cb9-32"><a href="#cb9-32" aria-hidden="true"></a></span>
+<span id="cb9-33"><a href="#cb9-33" aria-hidden="true"></a><span class="co">(* val res2 : int list = [10; 5; 20; 15] *)</span></span>
+<span id="cb9-34"><a href="#cb9-34" aria-hidden="true"></a><span class="kw">let</span> res2 = <span class="kw">with</span> choose_all handle comp1 ()</span></code></pre></div>
+<p>The above code demonstrates an effect <code>Decide</code>, which non-derterministically returns either <code>true</code> or <code>false</code>, akin to tossing a coin. Based on the result, a computation can branch out in <code>if</code> statements to perform other compuations. The interesting part is when the <code>Decide</code> operation is called, since the effect handler have access to the continuation <code>k</code>, it can decide to resume the continuation with <em>both</em> <code>true</code> and <code>false</code>, and get back all possible results of that computation.</p>
+<p>Before going into multiple resumption of continuations, we take a look at the simpler <code>choose_true</code> handler. <code>choose_true</code> always resume the continuation exactly once with <code>true</code>, and return the result directly. Because <code>choose_true</code> does not build any context or alter the result, it does not need to define a return handler, which can otherwise be explicitly defined as <code>| x -&gt; x</code>. Since there is no context, <code>choose_true</code> also doesn’t need a <code>finally</code> handler as the continuation result is already <code>a</code>.</p>
+<p>We then look at the <code>choose_all</code> handler, which always resume the continuation with both <code>true</code> and <code>false</code>. This also means <code>choose_all</code> will get multiple results from a computation <code>a</code>, each representing different branch results from the <code>Decide</code> operation. In our example, <code>choose_all</code> returns all results as <code>[a]</code> for any computation <code>a</code>.</p>
+<p>In the return handler of <code>choose_all</code>, it wraps a plain value inside a singleton list as the context, and has the type <code>a -&gt; [a]</code>. This makes the continuations in the <code>Decide</code> handler <code>[a]</code>, with the overall type <code>Decide (Bool -&gt; [a]) -&gt; [a]</code>. The <code>Decide</code> handler resumes the continuation twice with <code>true</code> and <code>false</code>, and then use the <code>@</code> operator to concatenate the result for both branches.</p>
+<p>Although <code>choose_all</code> builds up a context with <code>[a]</code>, it does not have a <code>finally</code> handler to extract the context result back to <code>a</code>. Because of this, <code>choose_all</code> <em>alters</em> the result type of a computation <code>a</code> to <code>[a]</code>, and have the type <code>forall a ε . (() -&gt; a!{Decide | ε}) -&gt; (() -&gt; [a]!{|ε})</code>. This shows that unlike the free monad approach in Haskell, effect interpretations in algebraic effects does not need to be natural transformation. An effect handler can handle computations with concrete types, and produce new computations with different types.</p>
+<p>Finally we have an example computation <code>comp1</code>, which performs two <code>Decide</code> operations, branch twice to decide the values for <code>x</code> and <code>y</code>, and finally return the result <code>x-y</code>. In <code>res1</code> we handle <code>comp1</code> with <code>choose_true</code>, which resume the continuation once with <code>true</code> for each call, and produce the <code>Int</code> result <code>10</code>. Meanwhile in <code>res2</code> we handle <code>comp1</code> with <code>choose_all</code>, which produces 4 different results: 10 for x=10 (true), y=0 (true); 5 for x=10 (true), y=5 (false); 20 for x=20 (false), y=0 (true); and 15 for x=20 (false), y=5 (false).</p>
+<p>As a final note, Haskell do have non determinism with monads such as <code>List</code> corresponding to <code>choose_all</code>. However the effect interpretation is hardcoded and does not allow us to easily switch to different interpretations such as <code>choose_true</code>. In Eff since it is so easy to implement alternative effect interpreations, we can for example build an alternative <code>choose_all</code> handler that stores the result in a binary tree to represent the decision tree for each decision.</p>
+<p>When the effect context gets decoupled from the concrete monad, it becomes much easier to define new contexts without having to worry about how <code>(&gt;&gt;=)</code> can be derived from the context.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><p><a href="https://github.com/yallop/effects-bibliography">Effects bibliography</a>, Jeremy Yallop</p></li>
+<li><p><a href="http://math.andrej.com/wp-content/uploads/2012/03/eff.pdf">Programming with Algebraic Effects and Handlers</a>, Andrej Bauer and Matija Pretnar</p></li>
+<li><p><a href="http://www.eff-lang.org/handlers-tutorial.pdf">An Introduction to Algebraic Effects and Handlers</a>, Matija Pretnar</p></li>
+<li><p><a href="https://arxiv.org/pdf/1807.05923.pdf">What is algebraic about algebraic effects and handlers?</a>, Andrej Bauer</p></li>
+<li><p><a href="http://okmij.org/ftp/Haskell/extensible/more.pdf">Freer monads, more extensible effects</a>, Oleg Kiselyov and Hiromi Ishii</p></li>
+<li><p><a href="http://homepages.inf.ed.ac.uk/slindley/papers/shallow-extended.pdf">Shallow Effect Handlers</a>, Daniel Hillerström and Sam Lindley</p></li>
+<li><p><a href="https://reasonablypolymorphic.com/blog/too-fast-too-free/">Freer Monads: Too Fast, Too Free</a>, Sandy Maguire</p></li>
+<li><p><a href="https://github.com/feuerbach/freemonad-benchmark">Free Monad Benchmarks</a>, Roman Cheplyaka</p></li>
+</ul>
+    </main>
+
+    <footer>
+      Content on this site is licensed under CC BY-NC 4.0
+      <a rel="license" href="http://creativecommons.org/licenses/by-nc/4.0/">
+        <img
+          alt="Creative Commons License"
+          style="border-width:0"
+          src="https://i.creativecommons.org/l/by-nc/4.0/88x31.png" />
+      </a>
+    </footer>
+  </body>
+</html>
